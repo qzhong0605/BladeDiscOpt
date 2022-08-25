@@ -63,6 +63,7 @@ from tao_common import (
 )
 
 PYTHON_BIN_NAME = os.getenv("PYTHON", "python")
+BAZEL_CMD = "bazel "
 
 def get_rocm_path(args):
     if args.rocm_path is not None:
@@ -252,7 +253,7 @@ def build_blade_gemm(root, args):
         return
     blade_gemm_build_dir = blade_gemm_dir(root)
     with cwd(blade_gemm_build_dir), gcc_env(args.bridge_gcc):
-        execute("make -j")
+        execute(f"make -j {2*os.cpu_count()}")
     logger.info("Stage [build_blade_gemm] success.")
 
 
@@ -274,6 +275,8 @@ def configure_bridge_bazel(root, args):
             f.write(f"{cmd} {line}\n")
 
         python_bin = os.path.join(args.venv_dir, "bin", "python3")
+        # set the cpu limits of bazel to avoid out of memory problem
+        _opt("local_cpu_resources", 2*os.cpu_count())
         _action_env("PYTHON_BIN_PATH", python_bin)
         _action_env("GCC_HOST_COMPILER_PATH", os.path.realpath(which("gcc")))
         _action_env("CC", os.path.realpath(which("gcc")))
@@ -332,6 +335,7 @@ def configure_bridge_bazel(root, args):
             _write("--test_tag_filters=-gpu", cmd="test")
             if args.enable_mkldnn:
                 _action_env("BUILD_WITH_MKLDNN", "1")
+                _action_env("BUILD_WITH_ONEDNN_ARGS", f"-j{2*os.cpu_count()}")
             if args.aarch64:
                 _action_env("BUILD_WITH_AARCH64", "1")
                 _action_env("DISC_TARGET_CPU_ARCH", args.target_cpu_arch or "arm64-v8a")
@@ -346,7 +350,7 @@ def configure_bridge_bazel(root, args):
 
     with cwd(tao_bazel_root), gcc_env(args.bridge_gcc):
         # make sure version.h is generated
-        execute(f"bazel build --config=release //:version_header_genrule")
+        execute(BAZEL_CMD + "build --config=release //:version_header_genrule")
 
     with cwd(root):
         # copy version.h from tao_bridge
@@ -369,7 +373,7 @@ def configure(root, args):
 
 @time_stage()
 def build_tao_compiler(root, args):
-    BAZEL_BUILD_CMD = "bazel build --experimental_multi_threaded_digest --define framework_shared_object=false" + ci_build_flag()
+    BAZEL_BUILD_CMD = BAZEL_CMD + "build --experimental_multi_threaded_digest --define framework_shared_object=false" + ci_build_flag()
     TARGET_TAO_COMPILER_MAIN = "//tensorflow/compiler/decoupling:tao_compiler_main"
     TARGET_DISC_OPT = "//tensorflow/compiler/mlir/disc:disc-opt"
     TARGET_DISC_REPLAY = "//tensorflow/compiler/mlir/disc/tools/disc-replay:disc-replay-main"
@@ -414,7 +418,7 @@ def build_tao_compiler(root, args):
             flag += ' --cxxopt="-DTENSORFLOW_USE_ROCM_COMPILE_TOOLKIT=1"'
 
         if args.build_dbg_symbol:
-            flag += " --copt=-g"
+            flag += " --cxxopt=-g"
 
         if args.enable_blaze_opt:
             flag += ' --cxxopt="-DBLAZE_OPT"'
@@ -469,7 +473,7 @@ def build_mlir_ral(root, args):
     if running_on_ci():
         configs.append('--config=ci_build')
 
-    BAZEL_BUILD_CMD = "bazel build --config=disc "
+    BAZEL_BUILD_CMD = BAZEL_CMD + "build --config=disc "
     BAZEL_BUILD_CMD = BAZEL_BUILD_CMD + " ".join(configs)
 
     TARGET_RAL_STANDALONE_LIB = "//tensorflow/compiler/mlir/xla/ral:libral_base_context.so"
@@ -508,8 +512,10 @@ def build_mlir_ral(root, args):
 
 @time_stage()
 def test_tao_compiler(root, args):
-    BAZEL_BUILD_CMD = "bazel build --experimental_multi_threaded_digest --define framework_shared_object=false --test_timeout=600 --javabase=@bazel_tools//tools/jdk:remote_jdk11"
-    BAZEL_TEST_CMD = "bazel test --experimental_multi_threaded_digest --define framework_shared_object=false --test_timeout=600 --javabase=@bazel_tools//tools/jdk:remote_jdk11"
+    BAZEL_BUILD_CMD = BAZEL_CMD + "build --experimental_multi_threaded_digest " \
+        + "--define framework_shared_object=false --test_timeout=600 --javabase=@bazel_tools//tools/jdk:remote_jdk11"
+    BAZEL_TEST_CMD = BAZEL_CMD + "test --experimental_multi_threaded_digest " \
+        + "--define framework_shared_object=false --test_timeout=600 --javabase=@bazel_tools//tools/jdk:remote_jdk11"
     BAZEL_TEST_CMD += ci_build_flag()
     BAZEL_BUILD_CMD += ci_build_flag()
     if running_on_ci():
@@ -615,11 +621,11 @@ def build_tao_bridge(root, args):
     if args.cmake:
         tao_bridge_build_dir = tao_build_dir(root)
         with cwd(tao_bridge_build_dir), gcc_env(args.bridge_gcc):
-            execute("make -j")
+            execute(f"make -j {2*os.cpu_count()}")
     else:
         tao_bazel_root = tao_bazel_dir(root)
         with cwd(tao_bazel_root), gcc_env(args.bridge_gcc):
-            execute(f"bazel build {tao_bridge_bazel_config(args)} //:libtao_ops.so")
+            execute(BAZEL_CMD + f"build {tao_bridge_bazel_config(args)} //:libtao_ops.so")
 
     logger.info("Stage [build_tao_bridge] success.")
 
@@ -694,7 +700,7 @@ def test_tao_bridge(root, args, cpp=True, python=True):
         with cwd(tao_bazel_root), gcc_env(args.bridge_gcc):
             if cpp:
                 output_file = os.path.join(tao_bazel_root, "cpp_test.out")
-                execute(f"bazel test {tao_bridge_bazel_config(args)} //...")
+                execute(BAZEL_CMD + f"test {tao_bridge_bazel_config(args)} //...")
                 logger.info("Stage [test_tao_bridge_cpp] with bazel success, output: " + output_file)
             if python:
                 output_file = os.path.join(tao_bazel_root, "py_test.out")
@@ -939,6 +945,12 @@ def parse_args():
         help="Skip linking tf framework",
     )
     parser.add_argument(
+        "--output_user_root",
+        required=False,
+        default=None,
+        help="the output base directory for bazel build tool"
+    )
+    parser.add_argument(
         "--cpu_only",
         required=False,
         action="store_true",
@@ -1060,6 +1072,9 @@ def parse_args():
 
 def main():
     args = parse_args()
+    if args.output_user_root:
+        global BAZEL_CMD
+        BAZEL_CMD += "--output_user_root={} ".format(args.output_user_root)
     root = get_source_root_dir()
     prepare_env(args)
     stage = args.stage

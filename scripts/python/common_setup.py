@@ -323,7 +323,7 @@ def config_mkldnn(root, args):
 def build_mkldnn(root):
     build_dir = mkldnn_build_dir(root)
     with cwd(build_dir):
-        execute("make -j")
+        execute(f"make -j {os.cpu_count()-1}")
         execute("make install")
     logger.info("Stage [build_mkldnn] success.")
 

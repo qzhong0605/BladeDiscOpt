@@ -32,7 +32,7 @@ cmake(
         "CXX": cxx_bin_path(),
     },
     generate_crosstool_file=False, ## This makes sure we use cxx by cache_entries settings
-    build_args = ["-j"],
+    build_args = [%{CMAKE_BUILD_ARGS}],
     lib_source = ":all_source_files",
     out_lib_dir = "lib64", # default out_lib_dir value is lib
     out_static_libs = [
