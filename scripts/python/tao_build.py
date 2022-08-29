@@ -245,6 +245,7 @@ def config_blade_gemm(root, args):
         execute(cmake_cmd)
         logger.info("blade_gemm configure success.")
 
+
 @time_stage()
 def build_blade_gemm(root, args):
     if not (args.platform_alibaba and args.blade_gemm):
@@ -418,7 +419,7 @@ def build_tao_compiler(root, args):
             flag += ' --cxxopt="-DTENSORFLOW_USE_ROCM_COMPILE_TOOLKIT=1"'
 
         if args.build_dbg_symbol:
-            flag += " --cxxopt=-g"
+            flag += " --copt=-gsplit-dwarf --linkopt=-Wl,--gdb-index,-fuse-ld=gold"
 
         if args.enable_blaze_opt:
             flag += ' --cxxopt="-DBLAZE_OPT"'
@@ -462,8 +463,6 @@ def build_mlir_ral(root, args):
     if args.platform_alibaba:
         configs.append(" --config=platform_alibaba")
 
-
-
     if args.enable_blaze_opt:
         configs.append('--config=disc_blaze')
 
@@ -486,6 +485,9 @@ def build_mlir_ral(root, args):
         execute(" ".join([BAZEL_BUILD_CMD, flag, target]))
 
     flag = ""
+    if args.build_dbg_symbol:
+        flag += " --copt=-gsplit-dwarf --linkopt=-Wl,--gdb-index,-fuse-ld=gold"
+
     with cwd(tf_root_dir(root)), gcc_env(args.bridge_gcc):
         bazel_build(TARGET_RAL_STANDALONE_LIB, flag=flag)
         bazel_build(TARGET_MLIR_DISC_BUILDER, flag=flag)
@@ -509,6 +511,7 @@ def build_mlir_ral(root, args):
         bazel_build(TARGET_DHLO_COMPILER_MAIN, flag=flag)
 
     logger.info("Stage [build_mlir_ral] success.")
+
 
 @time_stage()
 def test_tao_compiler(root, args):
@@ -589,6 +592,7 @@ def test_tao_compiler(root, args):
             flag += " --action_env=BRIDGE_ENABLE_TAO=true "
     logger.info("Stage [test_tao_compiler] success.")
 
+
 def tao_bridge_bazel_config(args):
     bazel_config = ""
     if args.enable_blaze_opt:
@@ -616,6 +620,7 @@ def tao_bridge_bazel_config(args):
         bazel_config += " --config=platform_alibaba"
     return bazel_config
 
+
 @time_stage()
 def build_tao_bridge(root, args):
     if args.cmake:
@@ -625,7 +630,11 @@ def build_tao_bridge(root, args):
     else:
         tao_bazel_root = tao_bazel_dir(root)
         with cwd(tao_bazel_root), gcc_env(args.bridge_gcc):
-            execute(BAZEL_CMD + f"build {tao_bridge_bazel_config(args)} //:libtao_ops.so")
+            if args.build_dbg_symbol:
+                execute(BAZEL_CMD + f"build {tao_bridge_bazel_config(args)} --copt=-gsplit-dwarf "
+                        "--linkopt=-Wl,--gdb-index,-fuse-ld=gold libtao_ops.so")
+            else:
+                execute(BAZEL_CMD + f"build {tao_bridge_bazel_config(args)} //:libtao_ops.so")
 
     logger.info("Stage [build_tao_bridge] success.")
 
